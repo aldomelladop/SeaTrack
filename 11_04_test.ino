@@ -14,8 +14,10 @@ String generaQueryString();
 void verificaYReconectaWiFi();
 
 // Configuración WiFi
-const char* ssid = "Redmi Note 12";
-const char* password = "qpwo1029";
+// Lista de redes WiFi
+const char* ssids[] = {"Redmi Note 12", "Sunrise", "Gatitos 2.4"};
+const char* passwords[] = {"qpwo1029", "Sunrise2024", "18412044"};
+int numRedes = 3; // Número de redes disponibles
 
 // Instancias y variables globales
 TinyGPSPlus gps;
@@ -59,16 +61,28 @@ void loop() {
 // Implementación de las funciones
 // Esta función maneja la conexión inicial a la red WiFi.
 void configuraWiFi() {
-  WiFi.begin(ssid, password);
-  Serial.print("Conectando a WiFi");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  wifiConnected = true;
-  Serial.println("\nWiFi conectado");
-}
+  for (int i = 0; i < numRedes; i++) {
+    Serial.print("Intentando conectar a: ");
+    Serial.println(ssids[i]);
+    WiFi.begin(ssids[i], passwords[i]);
 
+    int intentos = 0;
+    while (WiFi.status() != WL_CONNECTED && intentos < 10) { // Intenta hasta 10 veces por red
+      delay(500);
+      Serial.print(".");
+      intentos++;
+    }
+
+    if (WiFi.status() == WL_CONNECTED) {
+      Serial.println("\nWiFi conectado.");
+      return; // Sale de la función si se conecta exitosamente
+    } else {
+      Serial.println("\nFallo en la conexión. Intentando con la siguiente red...");
+    }
+  }
+
+  Serial.println("No se pudo conectar a ninguna red.");
+}
 // Esta función muestra información de debugging del GPS por el puerto serial.
 void muestraDebugGPS() {
   while (GPSSerial.available() > 0) {
@@ -97,7 +111,8 @@ void enviaDatosGPS() {
   String queryString = generaQueryString(tm, local);
   
   HTTPClient http;
-  String fullURL = "https://script.google.com/macros/s/AKfycby4lY8-W-a6qcFBgNJUQaU2ouxGk4JYRj-OXXX9RdMHwPqtXC-m_PNR_3tRNeye_IQy/exec" + queryString;
+  // String fullURL = "https://script.google.com/macros/s/AKfycby4lY8-W-a6qcFBgNJUQaU2ouxGk4JYRj-OXXX9RdMHwPqtXC-m_PNR_3tRNeye_IQy/exec" + queryString;
+  String fullURL = "https://script.google.com/macros/s/AKfycbwaVPUGitFwHKSnv_h4NUZsSus1Bfjsk0sWI80vwDO6PO32qmqonAar_akHxPKiR3HU/exec" + queryString;
   http.begin(fullURL);
   int httpCode = http.GET();
 
@@ -127,14 +142,17 @@ String generaQueryString(const tmElements_t &tm, const time_t &local) {
   return queryString;
 }
 
-// Esta función verifica y, si es necesario, intenta reconectar el WiFi.
+// Esta función verifica y, si es necesario, intenta reconectar el WiFi usando la configuración de múltiples redes.
 void verificaYReconectaWiFi() {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("WiFi desconectado, intentando reconectar...");
-    WiFi.reconnect();
+    configuraWiFi(); // Llama a la función que maneja la conexión a múltiples redes.
     if (WiFi.status() == WL_CONNECTED) {
       wifiConnected = true;
       Serial.println("Reconectado a WiFi");
+    } else {
+      Serial.println("No se pudo reconectar a ninguna red.");
     }
   }
 }
+
