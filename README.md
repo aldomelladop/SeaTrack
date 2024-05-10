@@ -1,36 +1,39 @@
 # SeaTrack
 
 ## Descripción del Proyecto
-Este proyecto consiste en un rastreador GPS desarrollado utilizando un módulo ESP32, que se caracteriza por su capacidad para procesar y filtrar datos de ubicación GPS en tiempo real. La implementación de un filtro de Kalman permite mejorar significativamente la precisión de los datos de localización. Este sistema es capaz de sincronizar la hora mediante el protocolo NTP (Network Time Protocol) y enviar los datos de ubicación, junto con su correspondiente marca de tiempo, a un servidor web. Este proyecto está orientado a aplicaciones como seguimiento de vehículos, gestión de flotas y sistemas personales de navegación.
+Este proyecto desarrolla un sistema de rastreo y monitoreo para lanchas utilizando la placa LilyGO T-Beam v1.1, conocida por su integración de GPS, LoRa y WiFi, lo que la hace ideal para aplicaciones de monitoreo remoto en ambientes marítimos. Este sistema no solo proporciona localización precisa mediante GPS y un filtro de Kalman para minimizar el ruido en los datos de localización, sino que también está diseñado para integrar futuros módulos de monitoreo de parámetros críticos en lanchas, como impactos, niveles de combustible y otros sensores ambientales y mecánicos.
 
 ## Características Principales
-- **Filtro Kalman**: Mejora la precisión de los datos GPS, reduciendo el ruido y las imprecisiones habituales en las lecturas de los módulos GPS.
-- **Sincronización de Hora NTP**: Proporciona una marca de tiempo precisa para cada registro de datos, crucial para el seguimiento temporal exacto en aplicaciones de monitoreo.
-- **Conectividad WiFi**: Permite la transmisión de datos a través de internet, facilitando la integración con sistemas basados en la nube y aplicaciones móviles.
-- **Actualizaciones OTA (Over-The-Air)**: Facilita la actualización del firmware del dispositivo sin necesidad de conexiones físicas, promoviendo un mantenimiento eficiente y a distancia.
+- **Filtro de Kalman**: Optimiza la precisión de los datos de localización GPS.
+- **Conectividad WiFi y LoRa**: Permite la transmisión de datos a larga distancia y a través de internet.
+- **Sincronización de Hora NTP**: Garantiza que todos los eventos registrados tengan una estampa de tiempo precisa, esencial para las bitácoras y el seguimiento de rutas.
+- **Actualizaciones OTA (Over-The-Air)**: Facilita la actualización y el mantenimiento del software a distancia.
 
 ## Especificaciones de Hardware
-- **ESP32**: Utilizamos una placa genérica ESP32, la cual ofrece una excelente relación costo-beneficio, soporte comunitario amplio y facilidad de uso.
-- **Módulo GPS**: Recomendamos un módulo GPS como el NEO-6M, que ofrece buena precisión y es fácilmente integrable con ESP32.
-- **Fuente de Alimentación**: Dependiendo de la aplicación, se puede usar una batería recargable o una conexión directa a la red eléctrica del vehículo.
+- **Placa LilyGO T-Beam v1.1**: Equipada con ESP32, GPS NEO-6M y módulo LoRa, ideal para seguimiento y comunicación en áreas remotas.
+- **Sensores Adicionales**:
+  - **Sensores de Impacto**: Para detectar colisiones o condiciones de navegación extremas.
+  - **Medidores de Nivel de Combustible**: Para gestionar el consumo y la autonomía de la embarcación.
+  - **Sensores Ambientales**: Como termómetros y barómetros, para monitorear las condiciones del entorno.
 
 ## Configuración y Uso
-1. **Montaje del Hardware**: Conectar el módulo GPS al ESP32 siguiendo las instrucciones específicas de conexión UART.
-2. **Configuración de WiFi**: Ajustar los parámetros de conexión en el archivo `config.h` para asegurar la conectividad con la red local.
-3. **Programación y Despliegue**: Utilizar el IDE de Arduino para cargar el software al ESP32, asegurándose de seleccionar el modelo correcto de placa y puerto.
+1. **Montaje del Hardware**: Conectar todos los sensores necesarios a la placa LilyGO T-Beam según las especificaciones de cada componente.
+2. **Configuración de la Red**: Ajustar los parámetros de WiFi y LoRa en el archivo `config.h` para garantizar una conectividad óptima.
+3. **Carga del Software**: Utilizar el IDE de Arduino para programar la placa, asegurándose de seleccionar la configuración adecuada para la T-Beam v1.1.
 
-## Proyectos Futuros
-- **Expansión a Monitoreo Ambiental**: Integración de sensores ambientales para monitorear condiciones como temperatura y humedad durante el transporte de mercancías sensibles.
-- **Sistema de Alertas en Tiempo Real**: Desarrollo de un sistema de notificaciones para alertar a los usuarios sobre eventos críticos, como desvíos de una ruta planificada o comportamientos de conducción peligrosos.
+## Proyectos Futuros y Ampliación
+- **Monitoreo Integral de Embarcaciones**: Incluir sensores para el seguimiento de la salud estructural del casco, sistemas eléctricos y eficiencia del motor.
+- **Bitácora Automática**: Desarrollar un sistema que genere registros automáticos de cada viaje, incluyendo rutas, condiciones operativas y eventos notables.
+- **Sistema de Alertas Proactivo**: Implementar un sistema de alertas que notifique a los operadores y a las bases en tierra sobre condiciones críticas o mantenimiento necesario.
 
 ## Otras Aplicaciones de Monitoreo
-- **Monitoreo de Mascotas**: Uso de collares GPS para la localización en tiempo real de mascotas.
-- **Sistemas de Seguridad Personal**: Implementación en dispositivos personales para alertar en situaciones de emergencia basándose en la localización del individuo.
-- **Logística y Distribución**: Optimización de rutas y seguimiento en tiempo real de la cadena de suministro.
+- **Seguridad Personal en Navegación**: Dispositivos personales que alerten sobre hombre al agua o desviaciones de una ruta planificada.
+- **Investigación Oceanográfica**: Uso de flotas de drones marinos equipados con similares sistemas de monitoreo para recopilación de datos marinos a gran escala.
+- **Turismo y Recreación**: Ofrecer a los operadores turísticos herramientas para el seguimiento y la gestión de sus flotas en tiempo real, mejorando la seguridad y la experiencia del usuario.
 
 ## Contribuciones
-Invitamos a desarrolladores y entusiastas a contribuir al proyecto, ya sea mejorando el código, proponiendo nuevas características o documentando casos de uso. Puedes contribuir haciendo fork del repositorio y enviando pull requests con tus mejoras.
+Este proyecto está abierto a colaboraciones. Se invita a los desarrolladores e investigadores interesados en tecnologías marinas a contribuir con código, ideas y pruebas de campo.
 
 ## Licencia
-Este proyecto se distribuye bajo la Licencia MIT, lo que permite la reutilización del código dentro de otros proyectos libremente y sin restricciones comerciales.
+Distribuido bajo la Licencia MIT, permitiendo el uso libre y la integración en aplicaciones comerciales sin restricciones.
 
