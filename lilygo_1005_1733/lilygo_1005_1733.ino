@@ -18,10 +18,11 @@ const unsigned long DATA_SEND_INTERVAL = 600000;
 unsigned long lastGPSUpdateTime = 0;
 unsigned long lastDataSendTime = 0;
 
-int numRedes = 3;
+int numRedes = 4;
 TinyGPSPlus gps;
 HardwareSerial GPSSerial(1);
-String deviceID = "TBEAM-AM-0905-1040-SNRS";
+// String deviceID = "TBEAM-AM-0905-1040-SNRS";
+String deviceID = "TBEAM-AM-0905-1040-TRND";
 bool wifiConnected = false;
 const unsigned long samplingInterval = 60000;
 unsigned long lastSampleTime = 0;
