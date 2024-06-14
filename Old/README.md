@@ -8,6 +8,7 @@ Este proyecto desarrolla un sistema de rastreo y monitoreo para lanchas utilizan
 - **Conectividad WiFi y LoRa**: Permite la transmisión de datos a larga distancia y a través de internet.
 - **Sincronización de Hora NTP**: Garantiza que todos los eventos registrados tengan una estampa de tiempo precisa, esencial para las bitácoras y el seguimiento de rutas.
 - **Actualizaciones OTA (Over-The-Air)**: Facilita la actualización y el mantenimiento del software a distancia.
+- **Gestión de Energía AXP192**: Mejora la eficiencia energética y proporciona monitoreo del nivel de batería.
 
 ## Especificaciones de Hardware
 - **Placa LilyGO T-Beam v1.1**: Equipada con ESP32, GPS NEO-6M y módulo LoRa, ideal para seguimiento y comunicación en áreas remotas.
@@ -21,6 +22,7 @@ Este proyecto desarrolla un sistema de rastreo y monitoreo para lanchas utilizan
 2. **Configuración de la Red**: Ajustar los parámetros de WiFi y LoRa en el archivo `config.h` para garantizar una conectividad óptima.
 3. **Carga del Software**: Utilizar el IDE de Arduino para programar la placa, asegurándose de seleccionar la configuración adecuada para la T-Beam v1.1.
 4. **Configuración de Tiempos de Suspensión**: Ajustar los tiempos de suspensión para que el dispositivo entre en modo de suspensión después de transmitir datos exitosamente. Actualmente, el tiempo de espera es de 10 segundos y el intervalo de suspensión es de 1.5 minutos si está conectado a USB y 1.75 minutos si no está conectado a USB.
+5. **Configuración del PMU (Power Management Unit)**: Configurar el AXP192 para gestionar eficientemente la energía y leer el nivel de batería.
 
 ### Configuración de `config.h`
 ```cpp
