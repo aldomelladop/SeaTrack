@@ -5,7 +5,7 @@
 #define BLYNK_TEMPLATE_ID "TMPL2xv9_DR2h"
 #define BLYNK_TEMPLATE_NAME "SeaTrack Dashboard"
 
-#define THING_NAME "SensorDevice"
+#define THING_NAME "sensorDevice/data"
 #define AWS_IOT_ENDPOINT "a2z3up0z3g2dc0-ats.iot.us-east-2.amazonaws.com"
 
 #include <WiFi.h>
@@ -121,8 +121,7 @@ void configurarBlynk() {
         clientID  = "JLC-MFA";
         CERTIFICATE = cert_TRND_TBEAM;
         PRIVATE_KEY = key_SBLU_TBEAM;
-        ROOT_CA = ca_SBLU_TBEAM;
-        
+        ROOT_CA = ca_SBLU_TBEAM; 
     }
 
     Serial.print("Configuring Blynk with device: ");
