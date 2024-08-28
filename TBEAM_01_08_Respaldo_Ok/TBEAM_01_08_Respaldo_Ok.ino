@@ -15,9 +15,12 @@
 #include <ArduinoJson.h>
 #include <esp_task_wdt.h>
 #include <pgmspace.h>
+#include <Preferences.h> // Biblioteca para almacenamiento en memoria interna
 
 WiFiMulti wifiMulti;
 ESP32Time rtc;
+Preferences preferences; // Instancia para manejar la memoria interna
+
 const unsigned long GPS_UPDATE_INTERVAL = 300000;  // 5 minutos
 const unsigned long DATA_SEND_INTERVAL = 600000;   // 10 minutos
 unsigned long lastGPSUpdateTime = 0;
@@ -67,6 +70,8 @@ void mostrarTiempoEspera(unsigned long intervalo, unsigned long ultimoEnvio);
 void esperar(unsigned long tiempoEspera);
 void enviarReporteAWS(bool exito, const String& mensaje);
 void enviarEstadoDispositivo();
+void almacenarPayloadLocalmente(const String& payload);
+void enviarPayloadsAlmacenados();
 
 void callback(char* topic, byte* payload, unsigned int length) {
   Serial.print("Message arrived [");
@@ -87,10 +92,6 @@ BLYNK_WRITE(V19) {
     ESP.restart();
   } else if (command == "status") {
     enviarEstadoDispositivo();
-  } else if (command == "clear") {
-    terminal.clear();
-    terminal.println("Terminal cleared.");
-    terminal.flush();
   } else {
     terminal.println("Comando no reconocido.");
     terminal.flush();
@@ -134,6 +135,8 @@ void setup() {
   esp_task_wdt_init(&wdt_config);  // Inicializar el WDT con la configuración
   esp_task_wdt_add(NULL);  // Añadir la tarea actual al WDT
 
+  preferences.begin("payloads", false); // Iniciar el almacenamiento en memoria interna
+
   lastGPSUpdateTime = millis();
   lastDataSendTime = millis();
 }
@@ -147,6 +150,9 @@ void loop() {
 
   if (WiFi.status() != WL_CONNECTED) {
     verificaYReconectaWiFi();
+  } else {
+    // Intentar enviar payloads almacenados si hay conexión WiFi
+    enviarPayloadsAlmacenados();
   }
 
   unsigned long currentMillis = millis();
@@ -164,9 +170,9 @@ void loop() {
       enviarReporteAWS(envioExitoso, mensajeReporte);
 
       if (!envioExitoso) {
-        Serial.println("Reiniciando debido a fallo en el envío de datos.");
-        ESP.restart();
+        almacenarPayloadLocalmente(generaJSONPayload());
       }
+
       enviarDatosATiempo();
 
       String coordenadas = String(filteredLat, 6) + ", " + String(filteredLng, 6);
@@ -204,8 +210,7 @@ void loop() {
 }
 
 void muestraDebugGPS() {
-  int count = 0;  // Contador para limitar la salida
-  while (GPSSerial.available() > 0 && count < 3) {
+  while (GPSSerial.available() > 0) {
     char c = GPSSerial.read();
     if (gps.encode(c)) {
       filteredLat = gps.location.lat();
@@ -214,7 +219,6 @@ void muestraDebugGPS() {
       Serial.printf("GPS: Lat = %f, Lng = %f\n", filteredLat, filteredLng);
       Serial.printf("Satellites: %d, HDOP: %f, Speed: %f, Course: %f\n",
                     gps.satellites.value(), gps.hdop.hdop(), gps.speed.kmph(), gps.course.deg());
-      count++;
     }
   }
   esp_task_wdt_reset();  // Reiniciar el Watchdog Timer
@@ -251,8 +255,8 @@ bool enviaDatosGPS() {
   String payload = generaJSONPayload();
   int qos = 1;  // Set QoS to 1 for message delivery confirmation
   bool envioExitoso = false;
-  int intentosFallidos = 0; // Contador de intentos fallidos
 
+  Serial.println("Iniciando envío de datos a AWS IoT...");
   for (int i = 0; i < 3; i++) {  // Intentar enviar hasta 3 veces
     if (client.publish("sensorDevice/data", payload.c_str(), qos)) {
       Serial.println("\nDatos enviados a AWS IoT: ");
@@ -275,7 +279,6 @@ bool enviaDatosGPS() {
       break;
     } else {
       Serial.println("Fallo al enviar datos a AWS IoT. Intentando de nuevo...");
-      intentosFallidos++;
     }
   }
 
@@ -292,36 +295,6 @@ bool enviaDatosGPS() {
     terminal.print("Fecha y hora: ");
     terminal.println(lastSentAWSData);
     terminal.flush();
-
-    // Intentar reconectar a AWS IoT después de fallos repetidos
-    if (intentosFallidos == 3) {
-      Serial.println("Intentando reconectar a AWS IoT...");
-      terminal.println("Intentando reconectar a AWS IoT...");
-      terminal.flush();
-
-      // Desconectar y volver a conectar al cliente
-      client.disconnect();
-      delay(2000); // Esperar un poco antes de intentar reconectar
-      if (client.connect(THING_NAME)) {
-        Serial.println("Reconexión a AWS IoT exitosa.");
-        terminal.println("Reconexión a AWS IoT exitosa.");
-        
-        // Intentar enviar nuevamente el último payload
-        if (client.publish("sensorDevice/data", payload.c_str(), qos)) {
-          Serial.println("Reenvío exitoso después de la reconexión.");
-          terminal.println("Reenvío exitoso después de la reconexión.");
-          terminal.flush();
-        } else {
-          Serial.println("Error: Reenvío fallido después de la reconexión.");
-          terminal.println("Error: Reenvío fallido después de la reconexión.");
-          terminal.flush();
-        }
-      } else {
-        Serial.println("Fallo en la reconexión a AWS IoT.");
-        terminal.println("Fallo en la reconexión a AWS IoT.");
-        terminal.flush();
-      }
-    }
   }
   return envioExitoso;
 }
@@ -531,13 +504,41 @@ void enviarEstadoDispositivo() {
   terminal.flush();
 }
 
-BLYNK_WRITE(V20) {
-  String command = param.asStr();
-  if (command == "help") {
-    terminal.println("Comandos disponibles:");
-    terminal.println("reboot  - Permite reiniciar el dispositivo de manera remota");
-    terminal.println("status  - Entrega información sobre el estado del dispositivo");
-    terminal.println("clear   - Limpia la pantalla del terminal");
-    terminal.flush();
+void almacenarPayloadLocalmente(const String& payload) {
+  static int index = 0; // Índice para identificar cada payload
+  String key = "payload" + String(index);
+  preferences.putString(key.c_str(), payload); // Guardar el payload
+  Serial.println("Payload almacenado localmente con clave: " + key);
+  index = (index + 1) % 100; // Limitar a 100 registros para no llenar la memoria
+}
+
+void enviarPayloadsAlmacenados() {
+  int totalPayloads = 0;
+  int sentPayloads = 0;
+
+  // Contar el total de payloads almacenados
+  for (int i = 0; i < 100; i++) {
+    String key = "payload" + String(i);
+    if (preferences.isKey(key.c_str())) {
+      totalPayloads++;
+    }
+  }
+
+  for (int i = 0; i < 100; i++) {
+    String key = "payload" + String(i);
+    if (preferences.isKey(key.c_str())) {
+      String payload = preferences.getString(key.c_str());
+      Serial.println("Intentando enviar payload almacenado: " + key);
+      if (client.publish("sensorDevice/data", payload.c_str(), 1)) {
+        Serial.println("Payload enviado exitosamente: " + key);
+        preferences.remove(key.c_str()); // Eliminar payload tras el envío exitoso
+        sentPayloads++;
+        int progress = (sentPayloads * 100) / totalPayloads;
+        Serial.printf("Progreso de envío: %d%%\n", progress);
+      } else {
+        Serial.println("Fallo al enviar payload almacenado: " + key);
+        break; // Si falla el envío, no intentamos con más para preservar el orden
+      }
+    }
   }
 }

@@ -15,9 +15,13 @@
 #include <ArduinoJson.h>
 #include <esp_task_wdt.h>
 #include <pgmspace.h>
+#include <Preferences.h> // Biblioteca para almacenamiento en memoria interna
+#include <esp_sleep.h>    // Biblioteca para manejar el deep sleep
 
 WiFiMulti wifiMulti;
 ESP32Time rtc;
+Preferences preferences; // Instancia para manejar la memoria interna
+
 const unsigned long GPS_UPDATE_INTERVAL = 300000;  // 5 minutos
 const unsigned long DATA_SEND_INTERVAL = 600000;   // 10 minutos
 unsigned long lastGPSUpdateTime = 0;
@@ -50,13 +54,12 @@ String lastSentAWSData = "N/A";
 BlynkTimer timer;
 WidgetTerminal terminal(V19);
 
-void configuraWiFi();
+void configuraWiFi();  // Updated function
 void setupOTA();
 void muestraDebugGPS();
 void checkGPSFix();
 String generaJSONPayload();
 bool enviaDatosGPS();
-void verificaYReconectaWiFi();
 void verificaIntervalosYReinicia();
 void sincronizaTiempo();
 void enviarDatosATiempo();
@@ -67,6 +70,17 @@ void mostrarTiempoEspera(unsigned long intervalo, unsigned long ultimoEnvio);
 void esperar(unsigned long tiempoEspera);
 void enviarReporteAWS(bool exito, const String& mensaje);
 void enviarEstadoDispositivo();
+void almacenarPayloadLocalmente(const String& payload);
+void enviarPayloadsAlmacenados();
+void restartWiFi();
+void toggleLogs(bool state);
+void mostrarQueueStatus();
+void syncTime();
+void forceSendPayloads();
+void startDeepSleep();
+bool reconectarAWS();
+void leerComandoSerial();  // Nueva función para leer comandos desde la terminal del Arduino IDE
+void processCommand(const String& command);  // Nueva función para procesar los comandos
 
 void callback(char* topic, byte* payload, unsigned int length) {
   Serial.print("Message arrived [");
@@ -80,21 +94,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
 
 BLYNK_WRITE(V19) {
   String command = param.asStr();
-  if (command == "reboot") {
-    terminal.println("Comando recibido: reboot. Reiniciando el dispositivo...");
-    terminal.flush();
-    delay(100);
-    ESP.restart();
-  } else if (command == "status") {
-    enviarEstadoDispositivo();
-  } else if (command == "clear") {
-    terminal.clear();
-    terminal.println("Terminal cleared.");
-    terminal.flush();
-  } else {
-    terminal.println("Comando no reconocido.");
-    terminal.flush();
-  }
+  processCommand(command);  // Utilizamos la misma función para procesar comandos de Blynk y de la terminal
 }
 
 void setup() {
@@ -108,7 +108,7 @@ void setup() {
       ;
   }
 
-  configuraWiFi();
+  configuraWiFi();  // Nueva versión robusta que maneja reconexión
   setupOTA();
   sincronizaTiempo();
   configurarBlynk();
@@ -134,6 +134,8 @@ void setup() {
   esp_task_wdt_init(&wdt_config);  // Inicializar el WDT con la configuración
   esp_task_wdt_add(NULL);  // Añadir la tarea actual al WDT
 
+  preferences.begin("payloads", false); // Iniciar el almacenamiento en memoria interna
+
   lastGPSUpdateTime = millis();
   lastDataSendTime = millis();
 }
@@ -143,10 +145,16 @@ void loop() {
   Blynk.run();
   client.loop();
 
+  leerComandoSerial();  // Leer comandos desde la terminal del Arduino IDE
+
   esp_task_wdt_reset();  // Reiniciar el Watchdog Timer
 
-  if (WiFi.status() != WL_CONNECTED) {
-    verificaYReconectaWiFi();
+  // Verificar y manejar reconexión WiFi si es necesario
+  configuraWiFi();
+
+  // Intentar enviar payloads almacenados si hay conexión WiFi
+  if (WiFi.status() == WL_CONNECTED) {
+    enviarPayloadsAlmacenados();
   }
 
   unsigned long currentMillis = millis();
@@ -164,9 +172,9 @@ void loop() {
       enviarReporteAWS(envioExitoso, mensajeReporte);
 
       if (!envioExitoso) {
-        Serial.println("Reiniciando debido a fallo en el envío de datos.");
-        ESP.restart();
+        almacenarPayloadLocalmente(generaJSONPayload());
       }
+
       enviarDatosATiempo();
 
       String coordenadas = String(filteredLat, 6) + ", " + String(filteredLng, 6);
@@ -203,9 +211,87 @@ void loop() {
   verificaIntervalosYReinicia();
 }
 
+void configuraWiFi() {
+  if (WiFi.status() == WL_CONNECTED) {
+    return;  // Si ya está conectado, no hacer nada
+  }
+
+  for (int i = 0; i < sizeof(ssids) / sizeof(ssids[0]); i++) {
+    wifiMulti.addAP(ssids[i], passwords[i]);
+  }
+
+  Serial.println("Conectando a WiFi...");
+  while (wifiMulti.run() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+  Serial.println("\nWiFi conectado.");
+  Serial.print("SSID: ");
+  Serial.println(WiFi.SSID());
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+}
+
+void leerComandoSerial() {
+  if (Serial.available()) {
+    String command = Serial.readStringUntil('\n');  // Leer el comando hasta nueva línea
+    processCommand(command);
+  }
+}
+
+void processCommand(const String& command) {
+  if (command == "reboot") {
+    Serial.println("Comando recibido: reboot. Reiniciando el dispositivo...");
+    delay(100);
+    ESP.restart();
+  } else if (command == "status") {
+    enviarEstadoDispositivo();
+  } else if (command == "restart_wifi") {
+    Serial.println("Reiniciando WiFi...");
+    restartWiFi();
+    Serial.println("WiFi reiniciado.");
+  } else if (command == "log on") {
+    Serial.println("Activando logs detallados...");
+    toggleLogs(true);
+  } else if (command == "log off") {
+    Serial.println("Desactivando logs detallados...");
+    toggleLogs(false);
+  } else if (command == "queue_status") {
+    mostrarQueueStatus();
+  } else if (command == "sync_time") {
+    Serial.println("Sincronizando el tiempo...");
+    syncTime();
+  } else if (command == "force_send") {
+    Serial.println("Forzando el envío de todos los payloads almacenados...");
+    forceSendPayloads();
+  } else if (command == "memory_status") {
+    mostrarQueueStatus();
+  } else if (command == "deep-sleep") {
+    Serial.println("Entrando en modo Deep Sleep...");
+    startDeepSleep();
+  } else if (command == "clear") {
+    Serial.println("Limpiando terminal...");
+  } else if (command == "help") {
+    Serial.println("Comandos disponibles:");
+    Serial.println("reboot       - Reinicia el dispositivo.");
+    Serial.println("status       - Muestra el estado actual del dispositivo.");
+    Serial.println("restart_wifi - Reinicia la conexión WiFi.");
+    Serial.println("log on/off   - Activa o desactiva la visualización de logs detallados.");
+    Serial.println("queue_status - Muestra el estado de la cola de payloads almacenados.");
+    Serial.println("sync_time    - Sincroniza manualmente la hora con un servidor NTP.");
+    Serial.println("force_send   - Fuerza el envío inmediato de todos los payloads almacenados.");
+    Serial.println("memory_status- Muestra el estado de la memoria interna.");
+    Serial.println("deep-sleep   - Pone el dispositivo en modo Deep Sleep.");
+    Serial.println("clear        - Limpia la pantalla del terminal.");
+  } else {
+    Serial.println("Comando no reconocido.");
+  }
+}
+
+
 void muestraDebugGPS() {
-  int count = 0;  // Contador para limitar la salida
-  while (GPSSerial.available() > 0 && count < 3) {
+  while (GPSSerial.available() > 0) {
     char c = GPSSerial.read();
     if (gps.encode(c)) {
       filteredLat = gps.location.lat();
@@ -214,7 +300,6 @@ void muestraDebugGPS() {
       Serial.printf("GPS: Lat = %f, Lng = %f\n", filteredLat, filteredLng);
       Serial.printf("Satellites: %d, HDOP: %f, Speed: %f, Course: %f\n",
                     gps.satellites.value(), gps.hdop.hdop(), gps.speed.kmph(), gps.course.deg());
-      count++;
     }
   }
   esp_task_wdt_reset();  // Reiniciar el Watchdog Timer
@@ -248,101 +333,104 @@ String generaJSONPayload() {
 }
 
 bool enviaDatosGPS() {
-  String payload = generaJSONPayload();
-  int qos = 1;  // Set QoS to 1 for message delivery confirmation
-  bool envioExitoso = false;
-  int intentosFallidos = 0; // Contador de intentos fallidos
+    String payload = generaJSONPayload();
+    int qos = 1;  // Set QoS to 1 for message delivery confirmation
+    bool envioExitoso = false;
 
-  for (int i = 0; i < 3; i++) {  // Intentar enviar hasta 3 veces
-    if (client.publish("sensorDevice/data", payload.c_str(), qos)) {
-      Serial.println("\nDatos enviados a AWS IoT: ");
-      Serial.println(payload);
-      lastDataSendTime = millis();
-      envioExitoso = true;
+    Serial.println("Iniciando el proceso de envío de datos a AWS IoT...");
 
-      struct tm timeinfo;
-      obtenerTiempo(timeinfo);
-      char fechaHora[20];
-      strftime(fechaHora, sizeof(fechaHora), "%d-%m-%y - %H:%M", &timeinfo);
-      lastSentAWSData = String(fechaHora);
-
-      // Log en terminal de Blynk
-      terminal.println("Datos enviados a AWS IoT con éxito.");
-      terminal.print("Fecha y hora: ");
-      terminal.println(lastSentAWSData);
-      terminal.flush();
-
-      break;
-    } else {
-      Serial.println("Fallo al enviar datos a AWS IoT. Intentando de nuevo...");
-      intentosFallidos++;
-    }
-  }
-
-  if (!envioExitoso) {
-    Serial.println("Error: No se pudo enviar los datos a AWS IoT después de 3 intentos.");
-    struct tm timeinfo;
-    obtenerTiempo(timeinfo);
-    char fechaHora[20];
-    strftime(fechaHora, sizeof(fechaHora), "%d-%m-%y - %H:%M", &timeinfo);
-    lastSentAWSData = String(fechaHora) + " (Fallido)";
-
-    // Log de error en terminal de Blynk
-    terminal.println("Error: No se pudo enviar los datos a AWS IoT.");
-    terminal.print("Fecha y hora: ");
-    terminal.println(lastSentAWSData);
-    terminal.flush();
-
-    // Intentar reconectar a AWS IoT después de fallos repetidos
-    if (intentosFallidos == 3) {
-      Serial.println("Intentando reconectar a AWS IoT...");
-      terminal.println("Intentando reconectar a AWS IoT...");
-      terminal.flush();
-
-      // Desconectar y volver a conectar al cliente
-      client.disconnect();
-      delay(2000); // Esperar un poco antes de intentar reconectar
-      if (client.connect(THING_NAME)) {
-        Serial.println("Reconexión a AWS IoT exitosa.");
-        terminal.println("Reconexión a AWS IoT exitosa.");
-        
-        // Intentar enviar nuevamente el último payload
+    for (int i = 0; i < 3; i++) {  // Intentar enviar hasta 3 veces
+        Serial.printf("Intento %d de 3: Enviando datos a AWS IoT...\n", i + 1);
         if (client.publish("sensorDevice/data", payload.c_str(), qos)) {
-          Serial.println("Reenvío exitoso después de la reconexión.");
-          terminal.println("Reenvío exitoso después de la reconexión.");
-          terminal.flush();
+            Serial.println("Datos enviados exitosamente a AWS IoT.");
+            lastDataSendTime = millis();
+            envioExitoso = true;
+
+            struct tm timeinfo;
+            obtenerTiempo(timeinfo);
+            char fechaHora[20];
+            strftime(fechaHora, sizeof(fechaHora), "%d-%m-%y - %H:%M", &timeinfo);
+            lastSentAWSData = String(fechaHora);
+
+            // Log en terminal de Blynk
+            terminal.println("Datos enviados a AWS IoT con éxito.");
+            terminal.print("Fecha y hora: ");
+            terminal.println(lastSentAWSData);
+            terminal.flush();
+            break;
         } else {
-          Serial.println("Error: Reenvío fallido después de la reconexión.");
-          terminal.println("Error: Reenvío fallido después de la reconexión.");
-          terminal.flush();
+            Serial.println("Fallo al enviar datos a AWS IoT. Intentando de nuevo...");
         }
-      } else {
-        Serial.println("Fallo en la reconexión a AWS IoT.");
-        terminal.println("Fallo en la reconexión a AWS IoT.");
-        terminal.flush();
-      }
     }
-  }
-  return envioExitoso;
+
+    if (!envioExitoso) {
+        Serial.println("Error: No se pudo enviar los datos a AWS IoT después de 3 intentos.");
+        struct tm timeinfo;
+        obtenerTiempo(timeinfo);
+        char fechaHora[20];
+        strftime(fechaHora, sizeof(fechaHora), "%d-%m-%y - %H:%M", &timeinfo);
+        lastSentAWSData = String(fechaHora) + " (Fallido)";
+
+        // Log de error en terminal de Blynk
+        terminal.println("Error: No se pudo enviar los datos a AWS IoT.");
+        terminal.print("Fecha y hora: ");
+        terminal.println(lastSentAWSData);
+        terminal.println("Intentando reconectar a AWS IoT...");
+        terminal.flush();
+
+        // Intentar reconectar a AWS IoT
+        if (reconectarAWS()) {
+            Serial.println("Reconexión a AWS IoT exitosa.");
+            terminal.println("Reconexión a AWS IoT exitosa. Reintentando enviar el último payload...");
+            terminal.flush();
+
+            // Reintentar enviar el último payload
+            if (client.publish("sensorDevice/data", payload.c_str(), qos)) {
+                Serial.println("Datos reenviados exitosamente a AWS IoT tras la reconexión.");
+                terminal.println("Datos reenviados exitosamente a AWS IoT tras la reconexión.");
+                terminal.flush();
+            } else {
+                Serial.println("Error: Fallo al reenviar datos tras la reconexión.");
+                terminal.println("Error: Fallo al reenviar datos tras la reconexión.");
+                terminal.flush();
+            }
+        } else {
+            Serial.println("Error: Reconexión a AWS IoT fallida.");
+            terminal.println("Error: Reconexión a AWS IoT fallida.");
+            terminal.flush();
+        }
+    }
+
+    return envioExitoso;
 }
 
-void configuraWiFi() {
-  for (int i = 0; i < sizeof(ssids) / sizeof(ssids[0]); i++) {
-    wifiMulti.addAP(ssids[i], passwords[i]);
-  }
-
-  Serial.println("Conectando a WiFi...");
-  while (wifiMulti.run() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-
-  Serial.println("\nWiFi conectado.");
-  Serial.print("SSID: ");
-  Serial.println(WiFi.SSID());
-  Serial.print("IP address: ");
-  Serial.println(WiFi.localIP());
+bool reconectarAWS() {
+    client.disconnect();  // Desconectar la sesión actual
+    delay(5000);  // Esperar un poco antes de intentar reconectar
+    if (client.connect(THING_NAME)) {
+        return true;
+    } else {
+        return false;
+    }
 }
+
+// void configuraWiFi() {
+//   for (int i = 0; i < sizeof(ssids) / sizeof(ssids[0]); i++) {
+//     wifiMulti.addAP(ssids[i], passwords[i]);
+//   }
+
+//   Serial.println("Conectando a WiFi...");
+//   while (wifiMulti.run() != WL_CONNECTED) {
+//     delay(500);
+//     Serial.print(".");
+//   }
+
+//   Serial.println("\nWiFi conectado.");
+//   Serial.print("SSID: ");
+//   Serial.println(WiFi.SSID());
+//   Serial.print("IP address: ");
+//   Serial.println(WiFi.localIP());
+// }
 
 void setupOTA() {
   ArduinoOTA.setHostname(HOSTNAME);
@@ -362,17 +450,6 @@ void setupOTA() {
 
   ArduinoOTA.begin();
   Serial.println("OTA Ready");
-}
-
-void verificaYReconectaWiFi() {
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("WiFi desconectado, intentando reconectar...");
-    while (wifiMulti.run() != WL_CONNECTED) {
-      delay(500);
-      Serial.print(".");
-    }
-    Serial.println("\nReconectado a WiFi.");
-  }
 }
 
 void verificaIntervalosYReinicia() {
@@ -531,13 +608,62 @@ void enviarEstadoDispositivo() {
   terminal.flush();
 }
 
-BLYNK_WRITE(V20) {
-  String command = param.asStr();
-  if (command == "help") {
-    terminal.println("Comandos disponibles:");
-    terminal.println("reboot  - Permite reiniciar el dispositivo de manera remota");
-    terminal.println("status  - Entrega información sobre el estado del dispositivo");
-    terminal.println("clear   - Limpia la pantalla del terminal");
-    terminal.flush();
+void almacenarPayloadLocalmente(const String& payload) {
+  static int index = 0; // Índice para identificar cada payload
+  String key = "payload" + String(index);
+  preferences.putString(key.c_str(), payload); // Guardar el payload
+  Serial.println("Payload almacenado localmente con clave: " + key);
+  index = (index + 1) % 100; // Limitar a 100 registros para no llenar la memoria
+}
+
+void enviarPayloadsAlmacenados() {
+  for (int i = 0; i < 100; i++) {
+    String key = "payload" + String(i);
+    if (preferences.isKey(key.c_str())) {
+      String payload = preferences.getString(key.c_str());
+      Serial.println("Intentando enviar payload almacenado: " + key);
+      if (client.publish("sensorDevice/data", payload.c_str(), 1)) {
+        Serial.println("Payload enviado exitosamente: " + key);
+        preferences.remove(key.c_str()); // Eliminar payload tras el envío exitoso
+      } else {
+        Serial.println("Fallo al enviar payload almacenado: " + key);
+        break; // Si falla el envío, no intentamos con más para preservar el orden
+      }
+    }
   }
+}
+
+void restartWiFi() {
+  WiFi.disconnect();
+  delay(1000);
+  configuraWiFi();
+}
+
+void toggleLogs(bool state) {
+  // Implementar la lógica para activar o desactivar los logs detallados
+}
+
+void mostrarQueueStatus() {
+  terminal.println("Estado de la cola de payloads almacenados:");
+  for (int i = 0; i < 100; i++) {
+    String key = "payload" + String(i);
+    if (preferences.isKey(key.c_str())) {
+      terminal.println("Payload almacenado: " + key);
+    }
+  }
+  terminal.flush();
+}
+
+void syncTime() {
+  sincronizaTiempo();
+  terminal.println("Tiempo sincronizado con éxito.");
+  terminal.flush();
+}
+
+void forceSendPayloads() {
+  enviarPayloadsAlmacenados();
+}
+
+void startDeepSleep() {
+  esp_deep_sleep_start();
 }
