@@ -29,7 +29,7 @@ unsigned long lastGPSUpdateTime = 0;
 unsigned long lastDataSendTime = 0;
 
 // Nueva variable para la versión del firmware
-const String firmwareVersion "1.0.29.08 - Correccion-informe-payloads";  // Cambia esta versión según corresponda
+const String firmwareVersion = "1.0.29.08 - Correccion-informe-payloads";  // Cambia esta versión según corresponda
 
 TinyGPSPlus gps;
 HardwareSerial GPSSerial(1);
