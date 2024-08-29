@@ -16,7 +16,8 @@
 #include <esp_task_wdt.h>
 #include <pgmspace.h>
 #include <Preferences.h> // Biblioteca para almacenamiento en memoria interna
-#include <esp_sleep.h>    // Biblioteca para manejar el deep sleep
+#include <esp_sleep.h>   // Biblioteca para manejar el deep sleep
+
 
 WiFiMulti wifiMulti;
 ESP32Time rtc;
@@ -26,6 +27,9 @@ const unsigned long GPS_UPDATE_INTERVAL = 300000;  // 5 minutos
 const unsigned long DATA_SEND_INTERVAL = 600000;   // 10 minutos
 unsigned long lastGPSUpdateTime = 0;
 unsigned long lastDataSendTime = 0;
+
+// Nueva variable para la versión del firmware
+const String firmwareVersion "1.0.29.08 - Correccion-informe-payloads";  // Cambia esta versión según corresponda
 
 TinyGPSPlus gps;
 HardwareSerial GPSSerial(1);
@@ -48,13 +52,14 @@ bool mostrarTiempoEsperaActivo = true;
 bool usbEvaluator = false;
 bool delayFor3min = true;
 bool delayFor5min = false;
+bool logs_on = false;  // Variable para controlar los logs
 
 String lastSentAWSData = "N/A";
 
 BlynkTimer timer;
 WidgetTerminal terminal(V19);
 
-void configuraWiFi();  // Updated function
+void configuraWiFi();
 void setupOTA();
 void muestraDebugGPS();
 void checkGPSFix();
@@ -81,6 +86,8 @@ void startDeepSleep();
 bool reconectarAWS();
 void leerComandoSerial();  // Nueva función para leer comandos desde la terminal del Arduino IDE
 void processCommand(const String& command);  // Nueva función para procesar los comandos
+void mostrarAyuda();  // Nueva función para mostrar la ayuda
+void mostrarEstadoGeneral();
 
 void callback(char* topic, byte* payload, unsigned int length) {
   Serial.print("Message arrived [");
@@ -125,6 +132,13 @@ void setup() {
   } else {
     Serial.println("AWS IoT Timeout!");
   }
+
+  // Mostrar la versión del firmware en el terminal de Blynk
+  terminal.println("Firmware version: " + firmwareVersion);
+  terminal.flush();
+
+  // Mostrar la versión del firmware en la consola de Arduino
+  Serial.println("Firmware version: " + firmwareVersion);
 
   // Configurar el Watchdog Timer (WDT)
   esp_task_wdt_config_t wdt_config = {
@@ -211,6 +225,80 @@ void loop() {
   verificaIntervalosYReinicia();
 }
 
+
+void mostrarEstadoWiFi() {
+  if (WiFi.status() == WL_CONNECTED) {
+    terminal.println("WiFi: Conectado");
+    terminal.print("SSID: ");
+    terminal.println(WiFi.SSID());
+    terminal.print("IP: ");
+    terminal.println(WiFi.localIP());
+  } else {
+    terminal.println("WiFi: Desconectado");
+  }
+  if (logs_on) {
+    terminal.flush();
+  }
+}
+
+void actualizarEstadoBateria() {
+  if (PMU->isBatteryConnect()) {
+    terminal.print("Batería: ");
+    terminal.print(PMU->getBatteryPercent());
+    terminal.println("%");
+    terminal.print("Voltaje: ");
+    terminal.print(PMU->getBattVoltage());
+    terminal.println("mV");
+  } else {
+    terminal.println("Batería no conectada.");
+  }
+  if (logs_on) {
+    terminal.flush();
+  }
+}
+
+void actualizarEstadoGPS() {
+  terminal.print("Satélites: ");
+  terminal.println(gps.satellites.value());
+  terminal.print("HDOP: ");
+  terminal.println(gps.hdop.hdop());
+  terminal.print("Latitud: ");
+  terminal.println(filteredLat, 6);
+  terminal.print("Longitud: ");
+  terminal.println(filteredLng, 6);
+
+  if (logs_on) {
+    terminal.flush();
+  }
+}
+
+void mostrarUltimoEnvioAWS() {
+  terminal.println("Último intento de envío a AWS:");
+  terminal.print("Fecha y hora: ");
+  terminal.println(lastSentAWSData);
+  
+  if (logs_on) {
+    terminal.flush();
+  }
+}
+
+
+void mostrarEstadoGeneral() {
+  terminal.println("---- Estado General del Dispositivo ----");
+
+  mostrarEstadoWiFi();          // Mostrar estado del WiFi
+  actualizarEstadoBateria();    // Actualizar y mostrar el estado de la batería
+  actualizarEstadoGPS();        // Actualizar y mostrar el estado del GPS
+  mostrarUltimoEnvioAWS();      // Mostrar la información del último envío a AWS
+
+  terminal.println("---------------------------------------");
+
+  // Si los logs están activados, se asegura de que el contenido se muestre en Blynk
+  if (logs_on) {
+    terminal.flush();
+  }
+}
+
 void configuraWiFi() {
   if (WiFi.status() == WL_CONNECTED) {
     return;  // Si ya está conectado, no hacer nada
@@ -267,6 +355,9 @@ void processCommand(const String& command) {
     forceSendPayloads();
   } else if (command == "memory_status") {
     mostrarQueueStatus();
+  } else if (command == "gen_status") {
+    Serial.println("Mostrando el estado general del dispositivo...");
+    mostrarEstadoGeneral();
   } else if (command == "deep-sleep") {
     Serial.println("Entrando en modo Deep Sleep...");
     startDeepSleep();
@@ -282,12 +373,14 @@ void processCommand(const String& command) {
     Serial.println("sync_time    - Sincroniza manualmente la hora con un servidor NTP.");
     Serial.println("force_send   - Fuerza el envío inmediato de todos los payloads almacenados.");
     Serial.println("memory_status- Muestra el estado de la memoria interna.");
+    Serial.println("gen_status   - Muestra el estado general del dispositivo.");  // Nuevo comando agregado
     Serial.println("deep-sleep   - Pone el dispositivo en modo Deep Sleep.");
     Serial.println("clear        - Limpia la pantalla del terminal.");
   } else {
     Serial.println("Comando no reconocido.");
   }
 }
+
 
 
 void muestraDebugGPS() {
@@ -414,23 +507,6 @@ bool reconectarAWS() {
     }
 }
 
-// void configuraWiFi() {
-//   for (int i = 0; i < sizeof(ssids) / sizeof(ssids[0]); i++) {
-//     wifiMulti.addAP(ssids[i], passwords[i]);
-//   }
-
-//   Serial.println("Conectando a WiFi...");
-//   while (wifiMulti.run() != WL_CONNECTED) {
-//     delay(500);
-//     Serial.print(".");
-//   }
-
-//   Serial.println("\nWiFi conectado.");
-//   Serial.print("SSID: ");
-//   Serial.println(WiFi.SSID());
-//   Serial.print("IP address: ");
-//   Serial.println(WiFi.localIP());
-// }
 
 void setupOTA() {
   ArduinoOTA.setHostname(HOSTNAME);
@@ -644,15 +720,38 @@ void toggleLogs(bool state) {
 }
 
 void mostrarQueueStatus() {
-  terminal.println("Estado de la cola de payloads almacenados:");
+  int payloadCount = 0;  // Contador para los payloads almacenados
+  
+  if (logs_on) {
+    terminal.println("Estado de la cola de payloads almacenados:");
+  }
+  Serial.println("Estado de la cola de payloads almacenados:");
+
   for (int i = 0; i < 100; i++) {
     String key = "payload" + String(i);
     if (preferences.isKey(key.c_str())) {
-      terminal.println("Payload almacenado: " + key);
+      String payload = preferences.getString(key.c_str());
+      if (logs_on) {
+        terminal.println("Payload almacenado: " + key + " -> " + payload);
+      }
+      Serial.println("Payload almacenado: " + key + " -> " + payload);
+      payloadCount++;  // Incrementar contador si hay payload
     }
   }
-  terminal.flush();
+
+  if (payloadCount == 0) {
+    if (logs_on) {
+      terminal.println("No hay payloads almacenados.");
+    }
+    Serial.println("No hay payloads almacenados.");
+  }
+
+  if (logs_on) {
+    terminal.flush();
+  }
 }
+
+
 
 void syncTime() {
   sincronizaTiempo();
