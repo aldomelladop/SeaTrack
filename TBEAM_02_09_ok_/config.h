@@ -41,7 +41,7 @@ const char* HOSTNAME = "TBEAM-GPS-Device";
 const char* OTA_PASSWORD = "MFA_29052024"; // Contraseña segura
 
 // Definición de tokens de Blynk
-#define TOKEN_SUNRISE "T9uMOFBfFJDinGWUbvjzefmnmKZGwVlK"
+#define TOKEN_SUNRISE "61nZE36StrQfCfoDAqnPXVtp0yFZAQ4L"
 #define TOKEN_SUNSET "W9s_EDdsHpJCoHy5ysyDXBk4xD3F-zJB"
 #define TOKEN_SUNSET_ICE "S2OyggnDcBS9ywbj2s3h4jUPAY7whY4l"
 #define TOKEN_MOONSET "j9MTrEHHxL-PHMrlMpdBPkt8z8_MfPca"
