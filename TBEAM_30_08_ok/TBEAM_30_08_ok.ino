@@ -29,7 +29,7 @@ unsigned long lastGPSUpdateTime = 0;
 unsigned long lastDataSendTime = 0;
 
 // Nueva variable para la versión del firmware
-const String firmwareVersion = "1.1.30.08 - Correccion-informe-payloads";  // Cambia esta versión según corresponda
+const String firmwareVersion = "1.3.02.09 - Correccion-verificaYreconectaWiFi";  // Cambia esta versión según corresponda
 
 TinyGPSPlus gps;
 HardwareSerial GPSSerial(1);
@@ -87,6 +87,7 @@ bool reconectarAWS();
 void leerComandoSerial();  // Nueva función para leer comandos desde la terminal del Arduino IDE
 void processCommand(const String& command);  // Nueva función para procesar los comandos
 void mostrarAyuda();  // Nueva función para mostrar la ayuda
+void verificaYreconectaWiFi();
 void mostrarEstadoGeneral();
 
 void callback(char* topic, byte* payload, unsigned int length) {
@@ -159,15 +160,12 @@ void loop() {
   Blynk.run();
   client.loop();
 
-  leerComandoSerial();  // Leer comandos desde la terminal del Arduino IDE
-
   esp_task_wdt_reset();  // Reiniciar el Watchdog Timer
 
-  // Verificar y manejar reconexión WiFi si es necesario
-  configuraWiFi();
-
-  // Intentar enviar payloads almacenados si hay conexión WiFi
-  if (WiFi.status() == WL_CONNECTED) {
+  if (WiFi.status() != WL_CONNECTED) {
+    verificaYReconectaWiFi();
+  } else {
+    // Intentar enviar payloads almacenados si hay conexión WiFi
     enviarPayloadsAlmacenados();
   }
 
@@ -175,6 +173,8 @@ void loop() {
   if (currentMillis - lastSampleTime >= samplingInterval) {
     lastSampleTime = currentMillis;
     Serial.println("\nTomando muestra del GPS...");
+    terminal.println("\nTomando muestra del GPS...");  // Reportar a Blynk
+    terminal.flush();
     muestraDebugGPS();
     esp_task_wdt_reset();  // Reiniciar el Watchdog Timer
     checkGPSFix();
@@ -220,10 +220,67 @@ void loop() {
       }
     } else {
       Serial.println("GPS: Buscando señal...");
+      terminal.println("GPS: Buscando señal...");  // Reportar búsqueda de señal GPS a Blynk
+      terminal.flush();
     }
   }
   verificaIntervalosYReinicia();
 }
+
+
+void verificaYReconectaWiFi() {
+    const int maxIntentosReconexiones = 3; // Máximo de ciclos de reconexión
+    const int maxIntentosPorRed = 5;       // Máximo de intentos por cada red
+    int cicloReconexiones = 0;             // Contador de ciclos de reconexión
+
+    while (cicloReconexiones < maxIntentosReconexiones) {
+        Serial.printf("\nCiclo de reconexión #%d...\n", cicloReconexiones + 1);
+        terminal.printf("\nCiclo de reconexión #%d...\n", cicloReconexiones + 1);
+        terminal.flush();
+
+        for (int redActual = 0; redActual < sizeof(ssids) / sizeof(ssids[0]); redActual++) {
+            int intentosPorRed = 0; // Contador de intentos por red
+
+            while (wifiMulti.run() != WL_CONNECTED && intentosPorRed < maxIntentosPorRed) {
+                Serial.printf("Intentando conectar a %s... (Intento %d de %d)\n", ssids[redActual], intentosPorRed + 1, maxIntentosPorRed);
+                terminal.printf("Intentando conectar a %s... (Intento %d de %d)\n", ssids[redActual], intentosPorRed + 1, maxIntentosPorRed);
+                terminal.flush();
+
+                delay(1000); // Esperar un segundo entre intentos
+                esp_task_wdt_reset(); // Reiniciar el Watchdog Timer
+                intentosPorRed++;
+            }
+
+            // Si la conexión fue exitosa, salir de todos los bucles
+            if (WiFi.status() == WL_CONNECTED) {
+                Serial.println("\nWiFi conectado.");
+                terminal.println("\nWiFi conectado.");
+                terminal.print("SSID: ");
+                terminal.println(WiFi.SSID());
+                terminal.print("IP address: ");
+                terminal.println(WiFi.localIP());
+                terminal.flush();
+                return; // Salimos porque ya nos conectamos
+            } else {
+                Serial.printf("No se pudo conectar a %s. Probando con la siguiente red...\n", ssids[redActual]);
+                terminal.printf("No se pudo conectar a %s. Probando con la siguiente red...\n", ssids[redActual]);
+                terminal.flush();
+            }
+        }
+
+        // Si después de intentar todas las redes no se conectó, incrementamos el contador de ciclos de reconexión
+        cicloReconexiones++;
+    }
+
+    // Si llegamos aquí, no se pudo conectar después de varios ciclos de reconexión
+    if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("\nNo se pudo conectar a ninguna red después de varios intentos.");
+        terminal.println("\nNo se pudo conectar a ninguna red después de varios intentos.");
+        terminal.flush();
+        // Aquí podrías agregar lógica adicional, como entrar en modo Deep Sleep o reiniciar el dispositivo.
+    }
+}
+
 
 
 void mostrarEstadoWiFi() {
@@ -300,65 +357,32 @@ void mostrarEstadoGeneral() {
 }
 
 void configuraWiFi() {
-    static bool yaConectado = false;  // Variable para recordar el estado de conexión
+  Serial.println("Configurando WiFi...");
+  
+  // Añadir todos los puntos de acceso al gestor de múltiples redes
+  for (int i = 0; i < sizeof(ssids) / sizeof(ssids[0]); i++) {
+    wifiMulti.addAP(ssids[i], passwords[i]);
+  }
 
-    if (WiFi.status() == WL_CONNECTED) {
-        if (!yaConectado) {  // Solo mostrar el mensaje una vez cuando se conecta
-            Serial.println("Ya conectado a WiFi.");
-            terminal.println("Ya conectado a WiFi.");
-            yaConectado = true;  // Actualizar estado de conexión
-        }
-        if (logs_on) terminal.flush();
-        return;  // Si ya está conectado, no hacer nada
-    } else {
-        yaConectado = false;  // Reiniciar el estado de conexión si se desconecta
-    }
+  // Intentar conectar de forma no bloqueante
+  while (wifiMulti.run() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+    terminal.print(".");  // Reportar intento de conexión en Blynk
+    terminal.flush();
+    esp_task_wdt_reset();  // Reiniciar el Watchdog Timer
+  }
 
-    Serial.println("Configurando múltiples puntos de acceso WiFi...");
-    terminal.println("Configurando múltiples puntos de acceso WiFi...");
-    
-    for (int i = 0; i < sizeof(ssids) / sizeof(ssids[0]); i++) {
-        wifiMulti.addAP(ssids[i], passwords[i]);
-        Serial.print("Añadido SSID: ");
-        Serial.println(ssids[i]);
-        terminal.print("Añadido SSID: ");
-        terminal.println(ssids[i]);
-    }
-
-    Serial.println("Intentando conectar a WiFi...");
-    terminal.println("Intentando conectar a WiFi...");
-    
-    int attempts = 0;
-    const int maxAttempts = 20;
-
-    while (wifiMulti.run() != WL_CONNECTED && attempts < maxAttempts) {
-        delay(1000);
-        Serial.print(".");
-        terminal.print(".");
-        attempts++;
-    }
-
-    if (WiFi.status() == WL_CONNECTED) {
-        Serial.println("\nWiFi conectado.");
-        Serial.print("SSID: ");
-        Serial.println(WiFi.SSID());
-        Serial.print("IP address: ");
-        Serial.println(WiFi.localIP());
-
-        terminal.println("\nWiFi conectado.");
-        terminal.print("SSID: ");
-        terminal.println(WiFi.SSID());
-        terminal.print("IP address: ");
-        terminal.println(WiFi.localIP());
-        yaConectado = true;  // Marcar como conectado
-    } else {
-        Serial.println("\nNo se pudo conectar a ninguna red WiFi. Verifique las credenciales.");
-        terminal.println("\nNo se pudo conectar a ninguna red WiFi. Verifique las credenciales.");
-    }
-
-    // Asegurar que los logs se envíen a la terminal de Blynk
-    if (logs_on) terminal.flush();
+  Serial.println("\nWiFi conectado.");
+  terminal.println("\nWiFi conectado.");  // Reportar conexión exitosa a Blynk
+  terminal.print("SSID: ");
+  terminal.println(WiFi.SSID());
+  terminal.print("IP address: ");
+  terminal.println(WiFi.localIP());
+  terminal.flush();
 }
+
+
 
 void leerComandoSerial() {
   if (Serial.available()) {
@@ -368,41 +392,89 @@ void leerComandoSerial() {
 }
 
 void processCommand(const String& command) {
+  // Mostrar siempre en la terminal serial
+  Serial.println("Comando recibido: " + command);
+
+  // Mostrar en la terminal de Blynk solo si logs_on es true
+  if (logs_on) {
+    terminal.println("Comando recibido: " + command);
+    terminal.flush();
+  }
+
   if (command == "reboot") {
-    Serial.println("Comando recibido: reboot. Reiniciando el dispositivo...");
+    Serial.println("Reiniciando el dispositivo...");
+    if (logs_on) {
+      terminal.println("Reiniciando el dispositivo...");
+      terminal.flush();
+    }
     delay(100);
     ESP.restart();
   } else if (command == "status") {
     enviarEstadoDispositivo();
   } else if (command == "restart_wifi") {
     Serial.println("Reiniciando WiFi...");
+    if (logs_on) {
+      terminal.println("Reiniciando WiFi...");
+      terminal.flush();
+    }
     restartWiFi();
     Serial.println("WiFi reiniciado.");
+    if (logs_on) {
+      terminal.println("WiFi reiniciado.");
+      terminal.flush();
+    }
   } else if (command == "log on") {
     Serial.println("Activando logs detallados...");
+    if (logs_on) {
+      terminal.println("Activando logs detallados...");
+      terminal.flush();
+    }
     toggleLogs(true);
   } else if (command == "log off") {
     Serial.println("Desactivando logs detallados...");
+    if (logs_on) {
+      terminal.println("Desactivando logs detallados...");
+      terminal.flush();
+    }
     toggleLogs(false);
   } else if (command == "queue_status") {
     mostrarQueueStatus();
   } else if (command == "sync_time") {
     Serial.println("Sincronizando el tiempo...");
+    if (logs_on) {
+      terminal.println("Sincronizando el tiempo...");
+      terminal.flush();
+    }
     syncTime();
   } else if (command == "force_send") {
     Serial.println("Forzando el envío de todos los payloads almacenados...");
+    if (logs_on) {
+      terminal.println("Forzando el envío de todos los payloads almacenados...");
+      terminal.flush();
+    }
     forceSendPayloads();
   } else if (command == "memory_status") {
     mostrarQueueStatus();
   } else if (command == "gen_status") {
     Serial.println("Mostrando el estado general del dispositivo...");
+    if (logs_on) {
+      terminal.println("Mostrando el estado general del dispositivo...");
+      terminal.flush();
+    }
     mostrarEstadoGeneral();
   } else if (command == "deep-sleep") {
     Serial.println("Entrando en modo Deep Sleep...");
+    if (logs_on) {
+      terminal.println("Entrando en modo Deep Sleep...");
+      terminal.flush();
+    }
     startDeepSleep();
   } else if (command == "clear") {
     Serial.println("Limpiando terminal...");
-    terminal.clear(); 
+    if (logs_on) {
+      terminal.clear();
+      terminal.flush();
+    }
   } else if (command == "help") {
     Serial.println("Comandos disponibles:");
     Serial.println("reboot       - Reinicia el dispositivo.");
@@ -413,11 +485,31 @@ void processCommand(const String& command) {
     Serial.println("sync_time    - Sincroniza manualmente la hora con un servidor NTP.");
     Serial.println("force_send   - Fuerza el envío inmediato de todos los payloads almacenados.");
     Serial.println("memory_status- Muestra el estado de la memoria interna.");
-    Serial.println("gen_status   - Muestra el estado general del dispositivo.");  // Nuevo comando agregado
+    Serial.println("gen_status   - Muestra el estado general del dispositivo.");
     Serial.println("deep-sleep   - Pone el dispositivo en modo Deep Sleep.");
     Serial.println("clear        - Limpia la pantalla del terminal.");
+    
+    if (logs_on) {
+      terminal.println("Comandos disponibles:");
+      terminal.println("reboot       - Reinicia el dispositivo.");
+      terminal.println("status       - Muestra el estado actual del dispositivo.");
+      terminal.println("restart_wifi - Reinicia la conexión WiFi.");
+      terminal.println("log on/off   - Activa o desactiva la visualización de logs detallados.");
+      terminal.println("queue_status - Muestra el estado de la cola de payloads almacenados.");
+      terminal.println("sync_time    - Sincroniza manualmente la hora con un servidor NTP.");
+      terminal.println("force_send   - Fuerza el envío inmediato de todos los payloads almacenados.");
+      terminal.println("memory_status- Muestra el estado de la memoria interna.");
+      terminal.println("gen_status   - Muestra el estado general del dispositivo.");
+      terminal.println("deep-sleep   - Pone el dispositivo en modo Deep Sleep.");
+      terminal.println("clear        - Limpia la pantalla del terminal.");
+      terminal.flush();
+    }
   } else {
     Serial.println("Comando no reconocido.");
+    if (logs_on) {
+      terminal.println("Comando no reconocido.");
+      terminal.flush();
+    }
   }
 }
 
@@ -689,38 +781,66 @@ void esperar(unsigned long tiempoEspera) {
 }
 
 void enviarReporteAWS(bool exito, const String& mensaje) {
+  terminal.println("---- Reporte de Envío a AWS IoT ----");
+
   if (exito) {
-    terminal.println("Último envío exitoso:");
+    terminal.print("Estado: ");
+    terminal.println("Exitoso");
   } else {
-    terminal.println("Último intento de envío fallido:");
+    terminal.print("Estado: ");
+    terminal.println("Fallido");
   }
 
   terminal.print("Fecha y hora: ");
   terminal.println(lastSentAWSData);
+  terminal.print("Mensaje: ");
   terminal.println(mensaje);
+  
+  terminal.println("---------------------------------------");
   terminal.flush();
 }
-
 void enviarEstadoDispositivo() {
-  terminal.println("Estado del dispositivo:");
+  terminal.println("---- Estado del Dispositivo ----");
 
   // Estado de la conexión WiFi
+  terminal.print("WiFi: ");
   if (WiFi.status() == WL_CONNECTED) {
-    terminal.println("WiFi: Conectado");
+    terminal.print("Conectado\t");
     terminal.print("SSID: ");
-    terminal.println(WiFi.SSID());
-    terminal.print("IP: ");
+    terminal.print(WiFi.SSID());
+    terminal.print("\tIP: ");
     terminal.println(WiFi.localIP());
+    terminal.print("Nivel de señal: ");
+    terminal.println(WiFi.RSSI());
   } else {
-    terminal.println("WiFi: Desconectado");
+    terminal.println("Desconectado");
   }
 
   // Estado del GPS
   terminal.print("GPS Fix: ");
   terminal.println(gpsFix ? "Sí" : "No");
+  
+  // Estado de la conexión a AWS IoT
+  terminal.print("AWS IoT: ");
+  terminal.println(client.connected() ? "Conectado" : "Desconectado");
+  terminal.print("Último envío a AWS IoT: ");
+  terminal.println(lastSentAWSData);
+  
+  // Mostrar payloads almacenados en memoria
+  int payloadCount = 0;
+  for (int i = 0; i < 100; i++) {
+    if (preferences.isKey(("payload" + String(i)).c_str())) {
+      payloadCount++;
+    }
+  }
+  terminal.print("Payloads almacenados: ");
+  terminal.println(payloadCount);
+
+  terminal.println("---------------------------------------");
 
   terminal.flush();
 }
+
 
 void almacenarPayloadLocalmente(const String& payload) {
   static int index = 0; // Índice para identificar cada payload
@@ -754,42 +874,41 @@ void restartWiFi() {
 }
 
 void toggleLogs(bool state) {
-  // Implementar la lógica para activar o desactivar los logs detallados
+  logs_on = state;
+  Serial.println(state ? "Logs activados." : "Logs desactivados.");
+  if (logs_on) {
+    terminal.println(state ? "Logs activados." : "Logs desactivados.");
+    terminal.flush();
+  }
 }
 
 void mostrarQueueStatus() {
-  int payloadCount = 0;  // Contador para los payloads almacenados
+  terminal.println("---- Estado de la Cola de Payloads ----");
   
-  if (logs_on) {
-    terminal.println("Estado de la cola de payloads almacenados:");
-  }
-  Serial.println("Estado de la cola de payloads almacenados:");
+  int payloadCount = 0;  // Contador para los payloads almacenados
 
   for (int i = 0; i < 100; i++) {
     String key = "payload" + String(i);
     if (preferences.isKey(key.c_str())) {
       String payload = preferences.getString(key.c_str());
-      if (logs_on) {
-        terminal.println("Payload almacenado: " + key + " -> " + payload);
-      }
-      Serial.println("Payload almacenado: " + key + " -> " + payload);
-      payloadCount++;  // Incrementar contador si hay payload
+      terminal.print("Payload [");
+      terminal.print(key);
+      terminal.print("]:\t");
+      terminal.println(payload);
+      payloadCount++;
     }
   }
 
   if (payloadCount == 0) {
-    if (logs_on) {
-      terminal.println("No hay payloads almacenados.");
-    }
-    Serial.println("No hay payloads almacenados.");
+    terminal.println("No hay payloads almacenados.");
+  } else {
+    terminal.print("Total de payloads: ");
+    terminal.println(payloadCount);
   }
 
-  if (logs_on) {
-    terminal.flush();
-  }
+  terminal.println("---------------------------------------");
+  terminal.flush();
 }
-
-
 
 void syncTime() {
   sincronizaTiempo();
