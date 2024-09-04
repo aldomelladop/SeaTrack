@@ -29,14 +29,14 @@ unsigned long lastGPSUpdateTime = 0;
 unsigned long lastDataSendTime = 0;
 
 // Nueva variable para la versión del firmware
-const String firmwareVersion = "1.9.02.09.18:34 - FirmwareVersion";  // Cambia esta versión según corresponda
+const String firmwareVersion = "1.1.04.09.08:15 - InformaEstadoInicial";  // Cambia esta versión según corresponda
 
 TinyGPSPlus gps;
 HardwareSerial GPSSerial(1);
 
 bool wifiConnected = false;
 const unsigned long samplingInterval = 60000;  // 1 minuto
-unsigned long lastSampleTime = 0;
+unsigned long lastSampleTime = 0; 
 float h_nav = 0;
 unsigned long lastNavUpdateTime = 0;
 unsigned long lastGPSFixTime = 0;
@@ -90,6 +90,8 @@ void mostrarAyuda();  // Nueva función para mostrar la ayuda
 void verificaYreconectaWiFi();
 void mostrarEstadoGeneral();
 void verificaYReconectaBlynk();
+void reportarEstadoInicial();
+
 
 void callback(char* topic, byte* payload, unsigned int length) {
   Serial.print("Message arrived [");
@@ -142,19 +144,22 @@ void setup() {
   // Mostrar la versión del firmware en la consola de Arduino
   Serial.println("Firmware version: " + firmwareVersion);
 
-// Configurar el Watchdog Timer (WDT)
-esp_task_wdt_config_t wdt_config = {
-    .timeout_ms = 600000,  // Aumentar a 10 minutos para operaciones largas
-    .trigger_panic = true
-};
-esp_task_wdt_init(&wdt_config);  // Inicializar el WDT con la configuración
-esp_task_wdt_add(NULL);  // Añadir la tarea actual al WDT
+  // Configurar el Watchdog Timer (WDT)
+  esp_task_wdt_config_t wdt_config = {
+      .timeout_ms = 600000,  // Aumentar a 10 minutos para operaciones largas
+      .trigger_panic = true
+  };
+  esp_task_wdt_init(&wdt_config);  // Inicializar el WDT con la configuración
+  esp_task_wdt_add(NULL);  // Añadir la tarea actual al WDT
 
 
   preferences.begin("payloads", false); // Iniciar el almacenamiento en memoria interna
 
   lastGPSUpdateTime = millis();
   lastDataSendTime = millis();
+
+    // Reportar el estado inicial al Dashboard de Blynk
+  reportarEstadoInicial();
 }
 
 void loop() {
@@ -229,64 +234,40 @@ void loop() {
   verificaIntervalosYReinicia();
 }
 
+void reportarEstadoInicial() {
+  Serial.println("Reportando estado inicial a Blynk...");
 
-// void verificaYReconectaWiFi() {
-//     const int maxIntentosPorRed = 3;  // Máximo de intentos por cada red
-//     const int maxCiclosReconexiones = 3;  // Máximo de ciclos de reconexión
-//     int cicloReconexiones = 0;  // Contador de ciclos de reconexión
+  // Reportar la versión del firmware
+  Blynk.virtualWrite(V19, firmwareVersion);
 
-//     while (cicloReconexiones < maxCiclosReconexiones) {
-//         Serial.printf("\nCiclo de reconexión WiFi #%d...\n", cicloReconexiones + 1);
-//         terminal.printf("\nCiclo de reconexión WiFi #%d...\n", cicloReconexiones + 1);
-//         terminal.flush();
+  // Reportar el nivel de batería
+  if (PMU->isBatteryConnect()) {
+    Blynk.virtualWrite(V12, PMU->getBatteryPercent());
+  } else {
+    Blynk.virtualWrite(V12, 0);  // Si no hay batería conectada
+  }
 
-//         for (int redActual = 0; redActual < sizeof(ssids) / sizeof(ssids[0]); redActual++) {
-//             int intentosPorRed = 0;  // Contador de intentos por cada red
+  // Reportar estado del USB
+  Blynk.virtualWrite(V13, PMU->isVbusIn() ? "Sí" : "No");
 
-//             while (wifiMulti.run() != WL_CONNECTED && intentosPorRed < maxIntentosPorRed) {
-//                 Serial.printf("Intentando conectar a %s... (Intento %d de %d)\n", ssids[redActual], intentosPorRed + 1, maxIntentosPorRed);
-//                 terminal.printf("Intentando conectar a %s... (Intento %d de %d)\n", ssids[redActual], intentosPorRed + 1, maxIntentosPorRed);
-//                 terminal.flush();
+  // Reportar último intento de envío a AWS
+  Blynk.virtualWrite(V18, lastSentAWSData);
 
-//                 delay(1000);  // Esperar un segundo entre intentos
-//                 esp_task_wdt_reset();  // Reiniciar el Watchdog Timer
-//                 intentosPorRed++;
-//             }
+  // Reportar otras variables de estado relevantes
+  Blynk.virtualWrite(V1, rtc.getYear());
+  Blynk.virtualWrite(V2, rtc.getMonth());
+  Blynk.virtualWrite(V3, rtc.getDay());
+  Blynk.virtualWrite(V4, rtc.getHour());
+  Blynk.virtualWrite(V5, rtc.getMinute());
+  Blynk.virtualWrite(V6, rtc.getSecond());
+  Blynk.virtualWrite(V7, gps.satellites.value());
+  Blynk.virtualWrite(V8, gps.speed.knots());
+  Blynk.virtualWrite(V9, deviceID);
+  Blynk.virtualWrite(V10, String(filteredLat, 6));
+  Blynk.virtualWrite(V11, String(filteredLng, 6));
+  terminal.flush();
+}
 
-//             if (WiFi.status() == WL_CONNECTED) {
-//                 Serial.println("\nWiFi conectado.");
-//                 terminal.println("\nWiFi conectado.");
-//                 terminal.print("SSID: ");
-//                 terminal.println(WiFi.SSID());
-//                 terminal.print("IP address: ");
-//                 terminal.println(WiFi.localIP());
-//                 terminal.flush();
-
-//                 // Una vez conectado al WiFi, verificar la conexión a Blynk
-//                 verificaYReconectaBlynk();
-//                 return;  // Salir porque ya nos conectamos a una red
-//             } else {
-//                 Serial.printf("No se pudo conectar a %s. Probando con la siguiente red...\n", ssids[redActual]);
-//                 terminal.printf("No se pudo conectar a %s. Probando con la siguiente red...\n", ssids[redActual]);
-//                 terminal.flush();
-//             }
-//         }
-
-//         cicloReconexiones++;  // Incrementar el contador de ciclos de reconexión
-//     }
-
-//     // Si no se pudo conectar después de varios ciclos de reconexión
-//     if (WiFi.status() != WL_CONNECTED) {
-//         Serial.println("\nNo se pudo conectar a ninguna red después de varios intentos.");
-//         terminal.println("\nNo se pudo conectar a ninguna red después de varios intentos.");
-//         terminal.flush();
-//         Serial.println("Reiniciando el dispositivo para intentar de nuevo...");
-//         terminal.println("Reiniciando el dispositivo para intentar de nuevo...");
-//         terminal.flush();
-//         delay(100);
-//         ESP.restart();  // Reiniciar el dispositivo si no se logra conectar
-//     }
-// }
 
 void verificaYReconectaWiFi() {
     const int maxIntentosPorRed = 3;  // Máximo de intentos por cada red
