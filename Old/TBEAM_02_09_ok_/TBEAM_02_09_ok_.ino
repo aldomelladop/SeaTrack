@@ -24,19 +24,19 @@ ESP32Time rtc;
 Preferences preferences; // Instancia para manejar la memoria interna
 
 const unsigned long GPS_UPDATE_INTERVAL = 300000;  // 5 minutos
-const unsigned long DATA_SEND_INTERVAL = 300000;   // 10 minutos
+const unsigned long DATA_SEND_INTERVAL = 600000;   // 10 minutos
 unsigned long lastGPSUpdateTime = 0;
 unsigned long lastDataSendTime = 0;
 
 // Nueva variable para la versión del firmware
-const String firmwareVersion = "1.1.04.09.08:15 - InformaEstadoInicial";  // Cambia esta versión según corresponda
+const String firmwareVersion = "1.2.03.09.12:40 - InformaEstadoInicial";  // Cambia esta versión según corresponda
 
 TinyGPSPlus gps;
 HardwareSerial GPSSerial(1);
 
 bool wifiConnected = false;
 const unsigned long samplingInterval = 60000;  // 1 minuto
-unsigned long lastSampleTime = 0; 
+unsigned long lastSampleTime = 0;
 float h_nav = 0;
 unsigned long lastNavUpdateTime = 0;
 unsigned long lastGPSFixTime = 0;
@@ -65,11 +65,11 @@ void muestraDebugGPS();
 void checkGPSFix();
 String generaJSONPayload();
 bool enviaDatosGPS();
-void verificaIntervalosYReinicia();//revisar
+void verificaIntervalosYReinicia();
 void sincronizaTiempo();
 void enviarDatosATiempo();
 void obtenerTiempo(struct tm& timeinfo);
-// void enviarDatosPuertos();
+void enviarDatosPuertos();
 void muestraEstadoBateria();
 void mostrarTiempoEspera(unsigned long intervalo, unsigned long ultimoEnvio);
 void esperar(unsigned long tiempoEspera);
@@ -90,8 +90,6 @@ void mostrarAyuda();  // Nueva función para mostrar la ayuda
 void verificaYreconectaWiFi();
 void mostrarEstadoGeneral();
 void verificaYReconectaBlynk();
-void reportarEstadoInicial();
-
 
 void callback(char* topic, byte* payload, unsigned int length) {
   Serial.print("Message arrived [");
@@ -157,9 +155,6 @@ void setup() {
 
   lastGPSUpdateTime = millis();
   lastDataSendTime = millis();
-
-    // Reportar el estado inicial al Dashboard de Blynk
-  reportarEstadoInicial();
 }
 
 void loop() {
@@ -232,40 +227,6 @@ void loop() {
     }
   }
   verificaIntervalosYReinicia();
-}
-
-void reportarEstadoInicial() {
-  Serial.println("Reportando estado inicial a Blynk...");
-
-  // Reportar la versión del firmware
-  Blynk.virtualWrite(V19, firmwareVersion);
-
-  // Reportar el nivel de batería
-  if (PMU->isBatteryConnect()) {
-    Blynk.virtualWrite(V12, PMU->getBatteryPercent());
-  } else {
-    Blynk.virtualWrite(V12, 0);  // Si no hay batería conectada
-  }
-
-  // Reportar estado del USB
-  Blynk.virtualWrite(V13, PMU->isVbusIn() ? "Sí" : "No");
-
-  // Reportar último intento de envío a AWS
-  Blynk.virtualWrite(V18, lastSentAWSData);
-
-  // Reportar otras variables de estado relevantes
-  Blynk.virtualWrite(V1, rtc.getYear());
-  Blynk.virtualWrite(V2, rtc.getMonth());
-  Blynk.virtualWrite(V3, rtc.getDay());
-  Blynk.virtualWrite(V4, rtc.getHour());
-  Blynk.virtualWrite(V5, rtc.getMinute());
-  Blynk.virtualWrite(V6, rtc.getSecond());
-  Blynk.virtualWrite(V7, gps.satellites.value());
-  Blynk.virtualWrite(V8, gps.speed.knots());
-  Blynk.virtualWrite(V9, deviceID);
-  Blynk.virtualWrite(V10, String(filteredLat, 6));
-  Blynk.virtualWrite(V11, String(filteredLng, 6));
-  terminal.flush();
 }
 
 
@@ -731,7 +692,7 @@ void checkGPSFix() {
 void sincronizaTiempo() {
   configTime(0, 0, "pool.ntp.org", "time.nist.gov");
 
-  setenv("TZ", "CLT4CLST,M10.2.0/00:00:00,M3.2.0/00:00:00", 1);//corregirt
+  setenv("TZ", "CLT4CLST,M10.2.0/00:00:00,M3.2.0/00:00:00", 1);
   tzset();
 
   struct tm timeinfo;
